@@ -1,11 +1,14 @@
 <template>
   <Teleport to="body">
     <Transition name="settings-panel">
-      <div v-if="visible" class="replay-overlay" @click.self="$emit('close')">
+      <div v-if="visible" class="replay-overlay" @click.self="handleClose">
         <div class="replay-dialog">
           <div class="dialog-header">
             <span class="dialog-icon">▶</span>
-            <h3>弹幕重放</h3>
+            <div class="dialog-title">
+              <h3>弹幕重放</h3>
+              <p>选择 .jsonl 记录文件，将其中保存的弹幕消息重放到 WebSocket 后端。</p>
+            </div>
             <button class="btn-close" @click="handleClose">✕</button>
           </div>
 
@@ -91,11 +94,13 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue';
+import { ref, computed, onUnmounted } from 'vue';
 import { Replayer, type ReplayFileInfo, type ReplayState } from '@/core/replayer';
 import { isTauri } from '@/platform/runtime';
 import { invoke } from '@tauri-apps/api/core';
 import SkMessage from '@/components/Message';
+
+type TauriReplayFileInfo = ReplayFileInfo & { id: number };
 
 const props = defineProps<{
   visible: boolean;
@@ -106,6 +111,7 @@ const emit = defineEmits<{
   close: [];
   replayStart: [];
   replayStop: [];
+  stateChange: [state: ReplayState];
 }>();
 
 const replayer = new Replayer();
@@ -134,6 +140,7 @@ replayer.on('error', (msg) => {
 
 replayer.on('stateChange', (newState) => {
   state.value = newState;
+  emit('stateChange', newState);
   if (newState === 'idle') {
     emit('replayStop');
   }
@@ -151,25 +158,23 @@ const formatDuration = (ms: number) => {
 const selectFile = async () => {
   loadError.value = '';
   try {
-    let lines: string[];
-    let filename: string;
-
     if (isTauri()) {
-      const result = await invoke<{ lines: string[]; filename: string } | null>('cast_replay_read');
+      const result = await invoke<TauriReplayFileInfo | null>('cast_replay_read');
       if (!result) return;
-      lines = result.lines;
-      filename = result.filename;
+      fileInfo.value = replayer.loadStream(
+        result,
+        () => invoke<string | null>('cast_replay_next', { id: result.id }),
+        () => invoke('cast_replay_reset', { id: result.id }),
+        () => invoke('cast_replay_close', { id: result.id })
+      );
     } else {
       const [handle] = await window.showOpenFilePicker({
         types: [{ description: 'JSON Lines', accept: { 'application/x-ndjson': ['.jsonl'] } }],
       });
       const file = await handle.getFile();
-      filename = file.name;
       const text = await file.text();
-      lines = text.split('\n');
+      fileInfo.value = replayer.load(text.split('\n'), file.name);
     }
-
-    fileInfo.value = replayer.load(lines, filename);
   } catch (err) {
     if ((err as Error).name === 'AbortError') return;
     loadError.value = '文件读取失败: ' + ((err as Error).message || '未知错误');
@@ -193,11 +198,12 @@ const stopReplay = () => {
 };
 
 const handleClose = () => {
-  if (state.value !== 'idle') replayer.stop();
-  progressCurrent.value = 0;
-  progressTotal.value = 0;
   emit('close');
 };
+
+onUnmounted(() => {
+  replayer.dispose();
+});
 </script>
 
 <style scoped lang="scss">
@@ -231,11 +237,22 @@ const handleClose = () => {
       margin-right: 8px;
     }
 
-    h3 {
-      margin: 0;
+    .dialog-title {
       flex: 1;
-      font-size: 16px;
-      color: var(--app-text);
+      min-width: 0;
+
+      h3 {
+        margin: 0;
+        font-size: 16px;
+        color: var(--app-text);
+      }
+
+      p {
+        margin: 4px 0 0;
+        font-size: 12px;
+        line-height: 1.4;
+        color: var(--app-text-muted);
+      }
     }
 
     .btn-close {

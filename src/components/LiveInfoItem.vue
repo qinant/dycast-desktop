@@ -45,8 +45,11 @@ const props = withDefaults(defineProps<LiveInfoItemProps>(), {
   display: flex;
   align-items: center;
   gap: 5px;
-  flex-shrink: 0;
+  min-width: 0;
+  flex: 1 1 auto;
+  justify-content: flex-end;
   .text {
+    min-width: 0;
     user-select: none;
     font-size: 0.9rem;
     color: var(--app-text-muted);

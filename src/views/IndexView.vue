@@ -15,14 +15,14 @@
         <div class="view-left-tools">
           <span class="version-text">v{{ version }}</span>
           <div
-            :class="{ 'view-left-tool': true, 'cm-btn': true, 'is-recording': isRecording }"
-            :title="isRecording ? `停止记录(${recordingCount})` : '记录弹幕'"
-            @click.stop="toggleCastRecording">
+            :class="['view-left-tool', 'cm-btn', `record-${recordState}`]"
+            :title="recordToolTitle"
+            @click.stop="handleRecordToolClick">
             <i class="ice-save icon"></i>
           </div>
           <div
-            class="view-left-tool cm-btn"
-            title="弹幕重放"
+            :class="['view-left-tool', 'cm-btn', `replay-${replayState}`]"
+            :title="replayToolTitle"
             @click.stop="showReplay = true">
             <svg class="icon" width="1em" height="1em" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
               <polygon points="5 3 19 12 5 21 5 3"/>
@@ -73,7 +73,8 @@
       </div>
     </div>
     <SettingsPanel :visible="showSettings" @close="showSettings = false" />
-    <ReplayPanel :visible="showReplay" :relay-url="relayUrl" @close="showReplay = false" @replay-start="onReplayStart" @replay-stop="onReplayStop" />
+    <RecordPanel :visible="showRecord" :state="recordState" :count="recordingCount" @close="showRecord = false" @select="startCastRecording" @pause="pauseCastRecording" @resume="resumeCastRecording" @stop="stopCastRecording" />
+    <ReplayPanel :visible="showReplay" :relay-url="relayUrl" @close="showReplay = false" @replay-start="onReplayStart" @replay-stop="onReplayStop" @state-change="onReplayStateChange" />
   </div>
 </template>
 
@@ -84,7 +85,9 @@ import LiveStatusPanel from '@/components/LiveStatusPanel.vue';
 import CastList from '@/components/CastList.vue';
 import SidTool from '@/components/SidTool/SidTool.vue';
 import SettingsPanel from '@/components/SettingsPanel.vue';
+import RecordPanel from '@/components/RecordPanel.vue';
 import ReplayPanel from '@/components/ReplayPanel.vue';
+import type { ReplayState } from '@/core/replayer';
 import {
   CastMethod,
   DyCast,
@@ -107,6 +110,7 @@ import { settings } from '@/hooks/useSettings';
 import { version } from '../../package.json';
 
 const MAX_DEDUPE_IDS = 10000;
+type RecordState = 'idle' | 'recording' | 'paused';
 
 // 连接状态
 const connectStatus = ref<ConnectStatus>(0);
@@ -139,7 +143,7 @@ const otherRef = useTemplateRef('otherEl');
 // 记录弹幕
 const castSet = new Set<string>();
 const castIdQueue: string[] = [];
-const isRecording = ref(false);
+const recordState = ref<RecordState>('idle');
 const recordingCount = ref(0);
 const castRecorder = new JsonlRecorder<DyMessage>();
 // 弹幕客户端
@@ -148,10 +152,34 @@ let castWs: DyCast | undefined;
 let relayWs: RelayCast | undefined;
 // 设置面板
 const showSettings = ref(false);
+// 记录面板
+const showRecord = ref(false);
 // 重放面板
 const showReplay = ref(false);
 const isReplaying = ref(false);
+const replayState = ref<ReplayState>('idle');
 const appTheme = computed(() => settings.theme);
+const isRecording = computed(() => recordState.value !== 'idle');
+const recordToolTitle = computed(() => {
+  switch (recordState.value) {
+    case 'recording':
+      return `记录弹幕中(${recordingCount.value})`;
+    case 'paused':
+      return `弹幕记录已暂停(${recordingCount.value})`;
+    default:
+      return '记录弹幕';
+  }
+});
+const replayToolTitle = computed(() => {
+  switch (replayState.value) {
+    case 'playing':
+      return '弹幕重放中';
+    case 'paused':
+      return '弹幕重放已暂停';
+    default:
+      return '弹幕重放';
+  }
+});
 
 onMounted(() => {
   // Restore remembered values
@@ -238,7 +266,7 @@ const addCastId = function (id: string) {
 };
 
 const writeRecordedCasts = function (casts: DyMessage[]) {
-  if (!castRecorder.isRecording || !casts.length) return;
+  if (recordState.value !== 'recording' || !castRecorder.isRecording || !casts.length) return;
   const now = Date.now();
   const stamped = casts.map(c => ({ ...c, timestamp: now }));
   castRecorder
@@ -249,7 +277,7 @@ const writeRecordedCasts = function (casts: DyMessage[]) {
     .catch(err => {
       CLog.error('弹幕记录写入失败 =>', err);
       SkMessage.error('弹幕记录写入失败，已停止记录');
-      isRecording.value = false;
+      recordState.value = 'idle';
       castRecorder.stop().catch(closeErr => {
         CLog.error('关闭弹幕记录文件失败 =>', closeErr);
       });
@@ -448,7 +476,9 @@ const relayCast = async function () {
     CLog.info('正在连接转发中 =>', relayUrl.value);
     SkMessage.info(`转发连接中: ${relayUrl.value}`);
     const cast = new RelayCast(relayUrl.value);
+    let relayErrorReported = false;
     cast.on('open', () => {
+      relayErrorReported = false;
       CLog.info(`DyCast 转发连接成功`);
       SkMessage.success(`已开始转发`);
       setRelayInputStatus(true);
@@ -462,13 +492,14 @@ const relayCast = async function () {
     cast.on('close', (code, msg) => {
       CLog.info(`(${code})dycast 转发已关闭: ${msg || '未知原因'}`);
       if (code === 1000) SkMessage.info(`已停止转发`);
-      else SkMessage.warning(`转发已停止: ${msg || '未知原因'}`);
+      else if (!relayErrorReported) SkMessage.warning(`转发已停止: ${msg || '未知原因'}`);
       setRelayInputStatus(false);
       relayStatus.value = code === 1000 ? 0 : 2;
       relayWs = void 0;
       addConsoleMessage('转发已关闭');
     });
     cast.on('error', ev => {
+      relayErrorReported = true;
       CLog.warn(`dycast 转发出错: ${ev.message}`);
       SkMessage.error(`转发出错了: ${ev.message}`);
       setRelayInputStatus(false);
@@ -491,7 +522,7 @@ const stopRelayCast = function () {
 };
 
 const startCastRecording = async function () {
-  if (isRecording.value) return;
+  if (recordState.value !== 'idle') return;
   if (!JsonlRecorder.isSupported()) {
     SkMessage.error('当前环境不支持流式记录文件');
     return;
@@ -509,7 +540,8 @@ const startCastRecording = async function () {
       description: '弹幕记录'
     });
     recordingCount.value = 0;
-    isRecording.value = true;
+    recordState.value = 'recording';
+    showRecord.value = false;
     SkMessage.success('已开始记录弹幕');
     addConsoleMessage(`已开始记录弹幕: ${castRecorder.fileName}`);
   } catch (err) {
@@ -521,12 +553,13 @@ const startCastRecording = async function () {
 };
 
 const stopCastRecording = async function () {
-  if (!isRecording.value) return;
+  if (recordState.value === 'idle') return;
 
   try {
     const count = await castRecorder.stop();
     recordingCount.value = count;
-    isRecording.value = false;
+    recordState.value = 'idle';
+    showRecord.value = false;
     SkMessage.success(`已停止记录，共 ${count} 条`);
     addConsoleMessage(`弹幕记录已停止，共 ${count} 条`);
   } catch (err) {
@@ -535,22 +568,41 @@ const stopCastRecording = async function () {
   }
 };
 
+const pauseCastRecording = function () {
+  if (recordState.value !== 'recording') return;
+  recordState.value = 'paused';
+  SkMessage.info('弹幕记录已暂停');
+};
+
+const resumeCastRecording = function () {
+  if (recordState.value !== 'paused') return;
+  recordState.value = 'recording';
+  SkMessage.info('弹幕记录已继续');
+};
+
 const toggleCastRecording = function () {
-  if (isRecording.value) {
-    stopCastRecording();
-  } else {
-    startCastRecording();
-  }
+  showRecord.value = true;
+};
+
+const handleRecordToolClick = function () {
+  toggleCastRecording();
 };
 
 const onReplayStart = function () {
   isReplaying.value = true;
+  replayState.value = 'playing';
   SkMessage.info('弹幕重放已开始');
 };
 
 const onReplayStop = function () {
   isReplaying.value = false;
+  replayState.value = 'idle';
   SkMessage.info('弹幕重放已停止');
+};
+
+const onReplayStateChange = function (state: ReplayState) {
+  replayState.value = state;
+  isReplaying.value = state !== 'idle';
 };
 
 </script>
@@ -620,9 +672,21 @@ const onReplayStop = function () {
         opacity 0.2s ease;
       background-color: transparent;
       border-radius: 0.4em;
-      &.is-recording {
+      &.record-recording {
         color: #fff;
-        background-color: var(--app-danger);
+        background-color: var(--app-accent-strong);
+      }
+      &.record-paused {
+        color: #fff;
+        background-color: var(--app-warning);
+      }
+      &.replay-playing {
+        color: #fff;
+        background-color: var(--app-accent);
+      }
+      &.replay-paused {
+        color: #fff;
+        background-color: var(--app-warning);
       }
       &:hover {
         color: #fff;

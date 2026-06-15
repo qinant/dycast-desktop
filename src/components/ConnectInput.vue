@@ -30,7 +30,7 @@
 
 <script setup lang="ts">
 import { debounce } from '@/utils/loashUtil';
-import { onMounted, ref } from 'vue';
+import { onMounted, ref, watch } from 'vue';
 
 interface TestRV {
   flag: boolean;
@@ -157,6 +157,11 @@ const initData = function () {
 
 onMounted(() => {
   initData();
+});
+
+watch(inputValue, value => {
+  if (inputDisabled.value || actionPending.value) return;
+  runTest(value, false);
 });
 
 defineExpose({

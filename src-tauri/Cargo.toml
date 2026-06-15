@@ -1,6 +1,6 @@
 [package]
 name = "dycast-desktop"
-version = "1.4.0"
+version = "1.4.1"
 description = "Dycast Desktop - 一个用于获取抖音直播间弹幕的桌面应用"
 authors = ["qinant"]
 license = "MIT"

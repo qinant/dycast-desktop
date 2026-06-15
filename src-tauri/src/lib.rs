@@ -9,6 +9,9 @@ pub fn run() {
         .manage(std::sync::Arc::new(cast_record::CastRecordState::new()))
         .manage(std::sync::Arc::new(live_info::HttpState::new()))
         .manage(std::sync::Arc::new(std::sync::Mutex::new(
+            cast_replay::CastReplayState::new(),
+        )))
+        .manage(std::sync::Arc::new(std::sync::Mutex::new(
             ws_relay::WsState::new(),
         )))
         .invoke_handler(tauri::generate_handler![
@@ -20,6 +23,9 @@ pub fn run() {
             cast_record::cast_record_write,
             cast_record::cast_record_stop,
             cast_replay::cast_replay_read,
+            cast_replay::cast_replay_next,
+            cast_replay::cast_replay_reset,
+            cast_replay::cast_replay_close,
             ws_relay::ws_connect,
             ws_relay::ws_send,
             ws_relay::ws_send_text,

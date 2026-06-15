@@ -3,6 +3,7 @@ import { RelayCast } from './relay';
 import type { DyMessage } from './dycast';
 
 export interface ReplayFileInfo {
+  id?: number;
   filename: string;
   totalMessages: number;
   estimatedDurationMs: number;
@@ -21,12 +22,17 @@ const FALLBACK_INTERVAL_MS = 200;
 
 export class Replayer {
   private messages: DyMessage[] = [];
-  private intervals: number[] = [];
+  private memoryIndex = 0;
   private currentIndex = 0;
+  private pendingMessage: DyMessage | null = null;
+  private prevTimestamp: number | undefined;
   private state: ReplayState = 'idle';
   private timer: ReturnType<typeof setTimeout> | undefined;
   private relayCast: RelayCast | undefined;
   private fileInfo: ReplayFileInfo | null = null;
+  private nextLine: (() => Promise<string | null>) | undefined;
+  private resetSource: (() => Promise<void> | void) | undefined;
+  private disposeSource: (() => Promise<void> | void) | undefined;
   private emitter: Emitter<ReplayerEvent>;
 
   constructor() {
@@ -50,8 +56,12 @@ export class Replayer {
   }
 
   load(lines: string[], filename: string): ReplayFileInfo {
+    void this.disposeCurrentSource();
     this.messages = [];
-    this.intervals = [];
+    this.pendingMessage = null;
+    this.nextLine = undefined;
+    this.resetSource = undefined;
+    this.disposeSource = undefined;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
@@ -74,10 +84,8 @@ export class Replayer {
       const curr = this.messages[i].timestamp;
       if (prev !== undefined && curr !== undefined && curr > prev) {
         const diff = curr - prev;
-        this.intervals.push(diff);
         totalDuration += diff;
       } else {
-        this.intervals.push(FALLBACK_INTERVAL_MS);
         totalDuration += FALLBACK_INTERVAL_MS;
       }
     }
@@ -88,6 +96,22 @@ export class Replayer {
       estimatedDurationMs: totalDuration,
     };
 
+    return this.fileInfo;
+  }
+
+  loadStream(
+    info: ReplayFileInfo,
+    nextLine: () => Promise<string | null>,
+    resetSource: () => Promise<void> | void,
+    disposeSource: () => Promise<void> | void
+  ): ReplayFileInfo {
+    void this.disposeCurrentSource();
+    this.messages = [];
+    this.pendingMessage = null;
+    this.nextLine = nextLine;
+    this.resetSource = resetSource;
+    this.disposeSource = disposeSource;
+    this.fileInfo = info;
     return this.fileInfo;
   }
 
@@ -103,9 +127,12 @@ export class Replayer {
 
     this.relayCast = relay;
     this.currentIndex = 0;
+    this.memoryIndex = 0;
+    this.pendingMessage = null;
+    this.prevTimestamp = undefined;
     this.state = 'playing';
     this.emitter.emit('stateChange', 'playing');
-    this.scheduleNext();
+    void this.scheduleNext();
     return true;
   }
 
@@ -137,32 +164,90 @@ export class Replayer {
       this.relayCast.close();
       this.relayCast = undefined;
     }
+    this.pendingMessage = null;
+    void this.resetCurrentSource();
     this.currentIndex = 0;
     this.emitter.emit('stateChange', 'idle');
   }
 
-  private scheduleNext() {
+  dispose() {
+    this.stop();
+    if (this.state === 'idle') {
+      void this.disposeCurrentSource();
+    }
+  }
+
+  private async scheduleNext() {
     if (this.state !== 'playing') return;
 
-    const msg = this.messages[this.currentIndex];
+    let msg = this.pendingMessage;
+    try {
+      if (!msg) {
+        msg = await this.readNextMessage();
+        this.pendingMessage = msg;
+      }
+    } catch (err) {
+      this.emitter.emit('error', (err as Error).message || '读取重放消息失败');
+      this.stop();
+      return;
+    }
+
     if (!msg) {
       this.relayCast?.close();
       this.relayCast = undefined;
       this.state = 'idle';
       this.currentIndex = 0;
+      this.pendingMessage = null;
+      this.prevTimestamp = undefined;
+      void this.resetCurrentSource();
       this.emitter.emit('done');
       this.emitter.emit('stateChange', 'idle');
       return;
     }
 
-    this.relayCast?.send(JSON.stringify([msg]));
-    this.emitter.emit('progress', this.currentIndex + 1, this.messages.length);
+    const interval = this.currentIndex === 0
+      ? 0
+      : this.getInterval(this.prevTimestamp, msg.timestamp);
 
-    this.currentIndex++;
-    const interval = this.currentIndex < this.messages.length
-      ? this.intervals[this.currentIndex - 1]
-      : 0;
+    this.timer = setTimeout(() => {
+      if (this.state !== 'playing') return;
+      this.relayCast?.send(JSON.stringify([msg]));
+      this.emitter.emit('progress', this.currentIndex + 1, this.fileInfo?.totalMessages || 0);
+      this.pendingMessage = null;
+      this.prevTimestamp = msg.timestamp;
+      this.currentIndex++;
+      void this.scheduleNext();
+    }, interval === 0 ? 0 : Math.max(interval, 10));
+  }
 
-    this.timer = setTimeout(() => this.scheduleNext(), Math.max(interval, 10));
+  private async readNextMessage(): Promise<DyMessage | null> {
+    if (this.nextLine) {
+      const line = await this.nextLine();
+      return line ? JSON.parse(line) as DyMessage : null;
+    }
+    return this.messages[this.memoryIndex++] || null;
+  }
+
+  private getInterval(prev?: number, curr?: number) {
+    if (prev !== undefined && curr !== undefined && curr > prev) return curr - prev;
+    return FALLBACK_INTERVAL_MS;
+  }
+
+  private async resetCurrentSource() {
+    this.memoryIndex = 0;
+    this.pendingMessage = null;
+    this.prevTimestamp = undefined;
+    if (!this.resetSource) return;
+    await this.resetSource();
+  }
+
+  private async disposeCurrentSource() {
+    if (!this.disposeSource) return;
+    const disposeSource = this.disposeSource;
+    this.disposeSource = undefined;
+    this.resetSource = undefined;
+    this.pendingMessage = null;
+    this.nextLine = undefined;
+    await disposeSource();
   }
 }
