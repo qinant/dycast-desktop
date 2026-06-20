@@ -1,126 +1,111 @@
-# Dycast Desktop
+<div align="center">
+  <img src="./src-tauri/icons/128x128.png" width="96" alt="Dycast Desktop Logo" />
+  <h1>Dycast Desktop</h1>
+  <p><strong>轻量、原生的抖音直播弹幕采集与转发工具</strong></p>
+  <p>连接直播间，实时查看弹幕与房间状态，并将结构化消息转发、录制或重放到你的直播互动系统。</p>
+  <p>
+    <a href="https://github.com/qinant/dycast-desktop/releases/latest"><img src="https://img.shields.io/github/v/release/qinant/dycast-desktop?style=flat-square&amp;color=38b48b" alt="Release" /></a>
+    <a href="https://github.com/qinant/dycast-desktop/actions"><img src="https://img.shields.io/github/actions/workflow/status/qinant/dycast-desktop/release.yml?style=flat-square&amp;label=build" alt="Build" /></a>
+    <a href="./LICENSE"><img src="https://img.shields.io/github/license/qinant/dycast-desktop?style=flat-square" alt="License" /></a>
+    <a href="https://v2.tauri.app/"><img src="https://img.shields.io/badge/Tauri-2-24C8DB?style=flat-square&amp;logo=tauri&amp;logoColor=white" alt="Tauri 2" /></a>
+    <a href="https://vuejs.org/"><img src="https://img.shields.io/badge/Vue-3-42B883?style=flat-square&amp;logo=vuedotjs&amp;logoColor=white" alt="Vue 3" /></a>
+  </p>
+  <p>
+    <a href="https://github.com/qinant/dycast-desktop/releases/latest">下载安装</a> ·
+    <a href="#快速开始">快速开始</a> ·
+    <a href="#websocket-转发协议">数据协议</a> ·
+    <a href="#本地开发">参与开发</a>
+  </p>
+</div>
 
-Dycast Desktop（dycast-desktop）是一个基于 [skmcj/dycast](https://github.com/skmcj/dycast) 独立维护的 Tauri 桌面端弹幕工具，用于连接抖音直播间、实时读取直播间弹幕与房间状态，并可将解析后的弹幕数据转发到外部 WebSocket 服务，方便接入弹幕互动、直播工具、数据采集与本地调试流程。
+![Dycast Desktop 主界面](./docs/images/app-overview.png)
 
-## 功能
+## 为什么使用 Dycast Desktop
 
-- **直播连接**：输入抖音直播间房间号并连接直播间，支持心跳检测（10s 间隔）和消息健康度探测，不活跃时自动重连（最多 3 次）。
-- **消息展示**：实时展示聊天、礼物、点赞、关注、进入直播间、粉丝团、房间榜单等全类型弹幕消息；聊天消息支持 @提及、Emoji 图片渲染；列表支持按消息类型筛选显示。
-- **直播间信息**：展示房间封面、主播头像昵称、在线人数、点赞数、关注数等基础信息。
-- **SidTool 登录**：支持导入抖音 `sessionid` 进行认证登录，登录后可接收礼物等需要鉴权的消息。
-- **WebSocket 转发**：将弹幕以 JSON 格式实时转发到 `ws://` 或 `wss://` 服务端，支持按消息类型过滤。
-- **JSONL 录制**：将弹幕实时记录到本地 `.jsonl` 文件，支持按消息类型过滤，记录数实时显示。
-- **弹幕重放**：支持选择已录制的 `.jsonl` 文件，按原始时间间隔将弹幕回放到 WebSocket 后端，方便测试弹幕互动逻辑。支持暂停、继续、停止控制。
-- **暗色/亮色主题**：支持一键切换暗色和亮色主题，设置持久化。
-- **自动更新**：集成 Tauri updater，启动时自动检查 GitHub 新版本，支持一键下载安装重启。
-- **断线自动重连**：网络波动、下播等异常断开时自动尝试重连，重连次数超限后停止。
-- **设置持久化**：记住房间号、转发地址、消息过滤配置、主题偏好等，下次启动自动恢复。
+Dycast Desktop 是基于 [skmcj/dycast](https://github.com/skmcj/dycast) 独立维护的桌面端项目。它把抖音直播间的连接、protobuf 解码、消息展示和下游集成封装在一个开箱即用的应用中，无需浏览器脚本，也不要求业务系统直接处理直播协议。
 
-## 技术栈
+| 能力 | 说明 |
+| --- | --- |
+| 实时弹幕 | 展示聊天、Emoji、礼物、点赞、关注、进场、粉丝团、榜单及房间状态 |
+| 房间概览 | 展示封面、主播信息、在线人数、累计观众、关注数和点赞数 |
+| WebSocket 转发 | 将结构化 JSON 消息实时转发到任意 `ws://` 或 `wss://` 服务 |
+| JSONL 录制 | 流式写入本地文件，不在前端内存中堆积全量历史消息 |
+| 弹幕重放 | 按原始时间间隔将录制内容重放到 WebSocket 后端，便于联调和演示 |
+| 消息过滤 | 分别配置需要转发和录制的消息类型 |
+| 稳定连接 | 10 秒心跳、消息健康探测、异常断开自动重连（最多 3 次） |
+| 桌面体验 | 亮色/暗色主题、配置持久化、跨平台构建和应用内更新 |
 
-本项目是 Tauri 2 桌面应用，前后端分工如下：
+## 界面与工作流
 
-- 桌面容器：Tauri 2
-- 前端框架：Vue 3（`<script setup lang="ts">`）
-- 构建工具：Vite 6
-- 开发语言：TypeScript、Rust
-- 样式：SCSS（CSS 自定义属性主题系统）
-- 虚拟列表：`vue-virtual-scroller`
-- 数据处理：原生 `DecompressionStream` / `pako` 后备、自定义 protobuf 解析模型
-- 消息去重：Snowflake ID + 去重队列
-- 状态管理：响应式代理（无 Pinia/Vuex），localStorage 持久化
-- 通知系统：自定义 SkMessage 轻提示组件
-- 后端 Rust：Tauri 命令、reqwest HTTP（共享 webview cookie jar）、tokio-tungstenite WebSocket 中继、BufWriter 文件录制
+### 一处配置，控制转发与录制
 
-关键目录：
+自动更新、房间号记忆、转发地址、主题和消息类型均可在设置中管理。转发过滤与录制过滤互相独立，避免把无关的高频消息发送给下游。
 
-- `src/`：Vue 前端界面、弹幕解析、转发逻辑和工具函数。
-- `src/core/dycast.ts`：直播间连接、心跳、重连、弹幕消息解析和事件分发核心逻辑。
-- `src/core/model/`：抖音直播弹幕相关 protobuf 结构的 TypeScript 解析模型（懒加载）。
-- `src/platform/`：浏览器环境与 Tauri 环境的 HTTP / WebSocket 适配层。
-- `src-tauri/`：Tauri 2 Rust 工程、桌面端配置和原生能力实现。
-- `public/`：静态资源。
+![设置与消息过滤](./docs/images/settings-and-filters.png)
 
-## 环境要求
+### 录制真实流量，随时重放
 
-请先安装以下环境：
+<table>
+  <tr>
+    <td width="50%"><img src="./docs/images/jsonl-recording.png" alt="JSONL 弹幕录制" /></td>
+    <td width="50%"><img src="./docs/images/jsonl-replay.png" alt="JSONL 弹幕重放" /></td>
+  </tr>
+  <tr>
+    <td align="center">将接收到的消息持续写入 <code>.jsonl</code></td>
+    <td align="center">按原始间隔重放到 WebSocket 服务</td>
+  </tr>
+</table>
 
-- Node.js 22 或兼容版本
-- npm
-- Rust 1.77.2+
-- Tauri 2 所需系统依赖
+这套流程适合直播互动程序、可视化大屏、机器人和数据处理服务的离线调试：先录制一段真实弹幕，再反复重放，不必每次等待直播间产生新消息。
 
-Tauri 环境安装可参考官方文档：[Tauri prerequisites](https://v2.tauri.app/start/prerequisites/)
+## 快速开始
 
-## 开发运行
+### 1. 安装应用
 
-安装前端依赖：
+前往 [Releases](https://github.com/qinant/dycast-desktop/releases/latest) 下载适合当前系统的安装包：
+
+- Windows：优先选择 `.msi` 或 `-setup.exe`
+- macOS：选择对应架构的 `.dmg`
+- Linux：选择 `.AppImage` 或 `.deb`
+
+> 应用会在启动时检查新版本；也可以在设置中关闭自动检查或手动检查更新。
+
+### 2. 连接直播间
+
+1. 启动 Dycast Desktop。
+2. 在右上角输入抖音直播间房间号，点击「连接」。
+3. 连接成功后，中间区域显示聊天和礼物，右侧区域显示点赞、关注和进场等消息。
+4. 点击列表标题栏中的图标，可快速筛选当前显示的消息类型。
+
+房间号通常可以从直播间 URL 中取得。例如 `https://live.douyin.com/123456789` 的房间号为 `123456789`。
+
+### 3. 转发到你的服务
+
+在「WS地址」中输入接收端地址，例如 `ws://127.0.0.1:8765`，然后点击「转发」。项目附带了一个用于本地验证的 WebSocket 回显服务：
 
 ```sh
-npm install
+python server.py
 ```
 
-启动 Tauri 桌面端开发模式：
+服务默认监听 `8765` 端口。生产环境请使用自己的 WebSocket 服务，并根据下方协议处理消息。
 
-```sh
-npm run tauri-dev
+### 4. 可选登录
+
+部分消息可能需要登录态。点击左下角钥匙图标，可导入抖音 `sessionid`。凭证只用于请求抖音接口，请勿截图、分享或提交到仓库。
+
+## WebSocket 转发协议
+
+每个 WebSocket text message 都是一段 JSON。连接转发服务后，Dycast Desktop 会先发送一次直播间信息对象，之后发送弹幕批次数组：
+
+```text
+建立转发连接
+  ├─ DyLiveInfo      直播间信息对象，只发送一次
+  └─ DyMessage[]     弹幕批次数组，持续发送
 ```
 
-仅启动 Web 前端调试：
+接收端可使用 `Array.isArray(payload)` 区分两类数据。
 
-```sh
-npm run dev
-```
-
-仅 Web 前端模式主要用于界面和基础逻辑调试。完整桌面能力请使用 `npm run tauri-dev`。
-
-## 构建
-
-构建前端资源：
-
-```sh
-npm run build
-```
-
-构建桌面端安装包：
-
-```sh
-npm run tauri-build
-```
-
-构建产物位于：
-
-- Windows / macOS / Linux 可执行文件：`src-tauri/target/release/`
-- 安装包：`src-tauri/target/release/bundle/`
-
-具体产物类型取决于当前操作系统和 Tauri bundle 配置。
-
-## 使用方式
-
-1. **启动应用**。
-2. **登录（可选）**：点击左侧工具栏的 SidTool 按钮，粘贴抖音 `sessionid` Cookie 值完成认证。登录后可接收礼物消息等需要鉴权的数据类型。
-3. **连接直播间**：在「房间号」输入框填写抖音直播间房间号，点击「连接」。
-4. **实时查看**：连接成功后，中间列展示聊天和礼物弹幕，右侧列展示点赞、关注、进入等其他消息。每列顶部按钮可切换消息类型筛选。
-5. **WebSocket 转发**：在「WS地址」输入框填写外部服务地址（如 `ws://127.0.0.1:8080`），点击「转发」。可前往设置面板筛选要转发和忽略的消息类型。
-6. **记录弹幕**：点击左侧工具栏的记录按钮，选择 `.jsonl` 文件保存位置；再次点击停止记录。记录按钮会实时显示已记录的消息条数。
-7. **设置**：点击左下角齿轮按钮打开设置面板，可配置：
-   - 自动检查更新
-   - 记住房间号 / 转发地址
-   - 暗色 / 亮色主题
-   - 转发消息类型过滤
-   - 录制消息类型过滤
-   - 手动检查更新
-
-### WebSocket 转发数据结构
-
-转发端每次发送的是一个 WebSocket text message，内容是一段 JSON 字符串。接收端需要先 `JSON.parse`，解析后有两类数据：
-
-- 连接转发成功后先发送一次直播间信息对象 `DyLiveInfo`。
-- 后续每次收到弹幕批次时发送一个数组 `DyMessage[]`，数组里可能包含多条消息，也可能包含不同 `method` 类型的消息。
-
-接收端可用 `Array.isArray(payload)` 区分两类数据。
-
-直播间信息对象结构：
+### 直播间信息
 
 ```ts
 interface DyLiveInfo {
@@ -135,7 +120,9 @@ interface DyLiveInfo {
 }
 ```
 
-弹幕批次结构。注意：一次 WebSocket message 对应一个消息数组，不是一条单独弹幕；接收端应遍历数组逐条处理。
+### 弹幕批次
+
+一次 WebSocket message 对应一个数组，而非一条弹幕。数组中可能同时包含不同 `method` 的消息。
 
 ```ts
 type RelayMessagePayload = DyMessage[];
@@ -185,52 +172,21 @@ interface LiveRankItem {
 }
 ```
 
-常见 `method` 值：
+常见消息类型：
 
-| method | 含义 | 常见字段 |
+| `method` | 含义 | 常用字段 |
 | --- | --- | --- |
 | `WebcastChatMessage` | 聊天弹幕 | `user`、`content`、`rtfContent` |
 | `WebcastEmojiChatMessage` | 表情弹幕 | `user`、`content` |
 | `WebcastGiftMessage` | 礼物消息 | `user`、`toUser`、`gift` |
 | `WebcastLikeMessage` | 点赞消息 | `user`、`content`、`room.likeCount` |
-| `WebcastMemberMessage` | 用户进入直播间 | `user`、`content`、`room.audienceCount` |
+| `WebcastMemberMessage` | 用户进场 | `user`、`content`、`room.audienceCount` |
 | `WebcastSocialMessage` | 关注消息 | `user`、`content`、`room.followCount` |
-| `WebcastRoomUserSeqMessage` | 在线人数和榜单 | `room.audienceCount`、`room.totalUserCount`、`rank` |
+| `WebcastFansclubMessage` | 粉丝团消息 | `user`、`content` |
+| `WebcastRoomUserSeqMessage` | 在线人数与榜单 | `room`、`rank` |
 | `WebcastRoomRankMessage` | 直播间排行榜 | `rank` |
 | `WebcastRoomStatsMessage` | 房间统计 | `room.audienceCount` |
-| `WebcastFansclubMessage` | 粉丝团消息 | `user`、`content` |
-| `WebcastControlMessage` | 房间状态控制 | `content`、`room.status` |
-
-示例：
-
-```json
-[
-  {
-    "id": "7649725134995427337",
-    "method": "WebcastMemberMessage",
-    "user": {
-      "id": "MS4wLjABAAAA...",
-      "name": "之乎者也",
-      "avatar": "https://p11.douyinpic.com/..."
-    },
-    "content": "进入直播间",
-    "room": {
-      "audienceCount": "21497"
-    }
-  },
-  {
-    "id": "7649725129967285311",
-    "method": "WebcastChatMessage",
-    "user": {
-      "id": "MS4wLjABAAAA...",
-      "name": "吃柠檬",
-      "gender": 1,
-      "avatar": "https://p11.douyinpic.com/..."
-    },
-    "content": "点点关注，点点赞"
-  }
-]
-```
+| `WebcastControlMessage` | 直播状态控制 | `content`、`room.status` |
 
 Python 接收示例：
 
@@ -239,6 +195,7 @@ import json
 
 async for message in websocket:
     payload = json.loads(message)
+
     if isinstance(payload, list):
         for item in payload:
             print(item.get("method"), item.get("content"))
@@ -246,18 +203,94 @@ async for message in websocket:
         print("live info:", payload.get("roomNum"), payload.get("title"))
 ```
 
-记录文件为 JSON Lines 格式，即每行一条弹幕 JSON。
+## JSONL 文件格式
 
-## 弹幕记录与内存策略
+录制文件采用 JSON Lines 格式，每行保存一条带 `timestamp` 的弹幕 JSON。应用使用流式写入，因此长时间录制不会把全部历史消息保留在前端内存中。
 
-为保证长时间运行稳定性，界面弹幕列表只保留最近消息，因此应用不会在内存中默认保存全量弹幕。
+```json
+{"id":"7649725129967285311","method":"WebcastChatMessage","user":{"name":"示例用户"},"content":"这是一条弹幕","timestamp":1781928000000}
+```
 
-需要长期保存弹幕时，请使用记录功能。记录开启后，应用会将接收到的弹幕按批追加写入本地 `.jsonl` 文件，而不是累积在前端内存中。JSONL 文件可用文本编辑器逐行查看，也便于后续用脚本、数据库或数据分析工具处理。
+界面列表只保留最近的消息以控制内存占用；需要完整数据时，请开启录制。
 
-## Changelog
+## 技术架构
 
-版本历史请查看 [CHANGELOG.md](./CHANGELOG.md)，由 [git-cliff](https://github.com/orhun/git-cliff) 基于 git 提交记录自动生成。
+```text
+直播间 URL / 房间号
+        │
+        ▼
+HTML 状态快照 ──► Cookie / IM 参数
+        │
+        ▼
+Douyin WebSocket ──► gzip 解压 ──► protobuf 解码
+                                          │
+                      ┌───────────────────┼───────────────────┐
+                      ▼                   ▼                   ▼
+                   界面展示          WebSocket 转发        JSONL 录制
+                                                               │
+                                                               ▼
+                                                         弹幕定时重放
+```
+
+- **桌面容器**：Tauri 2
+- **前端**：Vue 3、TypeScript、Vite 6、SCSS
+- **消息列表**：`vue-virtual-scroller`
+- **数据处理**：原生 `DecompressionStream` / `pako` 后备、手写 protobuf 解码器
+- **原生层**：Rust、reqwest、tokio-tungstenite、BufWriter
+- **状态管理**：Vue reactive proxy + localStorage，无 Pinia/Vuex
+
+Tauri 生产环境通过 Rust 中继 HTTP 和 WebSocket，并与 WebView 共享 Cookie；浏览器开发环境则通过 Vite proxy 连接抖音服务。
+
+## 本地开发
+
+### 环境要求
+
+- Node.js 22+
+- npm
+- Rust 1.77.2+
+- [Tauri 2 系统依赖](https://v2.tauri.app/start/prerequisites/)
+
+```sh
+# 安装依赖
+npm install
+
+# 完整桌面开发模式
+npm run tauri-dev
+
+# 仅启动前端，用于 UI 调试
+npm run dev
+
+# 类型检查与前端构建
+npm run type-check
+npm run build
+
+# 构建本机安装包
+npm run tauri-build
+```
+
+构建产物位于 `src-tauri/target/release/bundle/`。本地构建使用独立配置，不生成 updater artifacts。
+
+### 目录说明
+
+| 路径 | 用途 |
+| --- | --- |
+| `src/views/`、`src/components/` | Vue 界面与交互组件 |
+| `src/core/dycast.ts` | 连接生命周期、心跳、重连和消息分发 |
+| `src/core/model/` | protobuf 数据结构与懒加载解码器 |
+| `src/platform/` | Tauri / Browser HTTP 与 WebSocket 适配层 |
+| `src/utils/jsonlRecorder.ts` | 跨平台流式 JSONL 录制 |
+| `src-tauri/src/` | HTTP、WebSocket、录制与重放的 Rust 实现 |
+
+## 版本与贡献
+
+版本历史见 [GitHub Releases](https://github.com/qinant/dycast-desktop/releases)，规划见 [ROADMAP.md](./ROADMAP.md)。提交信息遵循 Conventional Commits，支持以下类型：`feat`、`fix`、`perf`、`docs`、`chore`。
+
+欢迎提交 Issue 和 Pull Request。修改 protobuf 相关逻辑时，请注意 `src/core/model/` 中的解码文件由生成流程维护，不建议直接手工编辑。
 
 ## 免责声明
 
-本项目仅用于学习交流、桌面端工具开发和合法的直播辅助场景。请遵守相关平台规则、法律法规和数据使用边界。因不当使用造成的风险与后果由使用者自行承担。
+本项目仅用于学习交流、桌面工具开发和合法的直播辅助场景。使用者应遵守抖音平台规则、相关法律法规和数据使用边界。因不当使用产生的风险与后果由使用者自行承担。
+
+## License
+
+[MIT](./LICENSE) © 2026 qinant
