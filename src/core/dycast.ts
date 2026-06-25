@@ -278,7 +278,9 @@ export enum DyCastCloseCode {
   /** 无法正常接收信息 */
   CANNOT_RECEIVE = 4003,
   /** 因重连关闭 */
-  RECONNECTING = 4004
+  RECONNECTING = 4004,
+  /** 重连次数耗尽 */
+  RECONNECT_FAILED = 4005
 }
 
 // 配置
@@ -445,10 +447,10 @@ export class DyCast {
   // 订阅者
   private emitter: Emitter<DyCastEvent>;
 
-  // 懒加载解码器模块
-  private _decoders: DecoderModules | null = null;
+  // 懒加载解码器模块（缓存 Promise 避免 _afterOpen 预加载与 _ensureDecoders 首次解码竞态）
+  private _decodersPromise: Promise<DecoderModules> | null = null;
 
-  constructor(roomNum: string) {
+  constructor(roomNum: string, opts: { maxReconnectCount?: number } = {}) {
     // 初始化
     this.roomNum = roomNum;
     this.state = !1;
@@ -464,7 +466,7 @@ export class DyCast {
     // 当前重连次数
     this.reconnectCount = 0;
     // 最大重连次数
-    this.maxReconnectCount = 3;
+    this.maxReconnectCount = opts.maxReconnectCount ?? 3;
     // 上一次接收消息时间
     this.lastReceiveTime = Date.now();
     // 当前客户端状态
@@ -683,7 +685,10 @@ export class DyCast {
     this.reconnectCount++;
     if (this.reconnectCount > this.maxReconnectCount) {
       CLog.error('已超过最大重连次数，请稍后重试');
+      this.wsRoomStatus = WSRoomStatus.CLOSED;
+      this.isReconnecting = false;
       this.emitter.emit('error', Error('已超过最大重连次数，请稍后重试'));
+      this.emitter.emit('close', DyCastCloseCode.RECONNECT_FAILED, '已超过最大重连次数');
       return;
     }
     this.wsRoomStatus = WSRoomStatus.RECONNECTING;
@@ -865,10 +870,11 @@ export class DyCast {
   }
 
   /** 确保消息解码器已加载（首次调用时异步加载） */
-  private async _ensureDecoders(): Promise<DecoderModules> {
-    if (this._decoders) return this._decoders;
-    this._decoders = await loadDecoders();
-    return this._decoders;
+  private _ensureDecoders(): Promise<DecoderModules> {
+    if (!this._decodersPromise) {
+      this._decodersPromise = loadDecoders();
+    }
+    return this._decodersPromise;
   }
 
   /**
@@ -1069,7 +1075,7 @@ export class DyCast {
     this.closeEvent = { code: DyCastCloseCode.NO_STATUS, msg: 'CLOSE_NO_STATUS' };
     this.ws = void 0;
     this.isReconnecting = false;
-    this._decoders = null;
+    // 保留 _decodersPromise：ES 模块本身已缓存，重连后可直接复用，避免再次触发 import
   }
 
   /** 打开后 */
@@ -1079,13 +1085,9 @@ export class DyCast {
     this.isReconnecting = false;
     this.reconnectCount = 0;
     // 预加载消息解码器
-    if (!this._decoders) {
-      loadDecoders().then(mods => {
-        this._decoders = mods;
-      }).catch(err => {
-        CLog.error('DyCast Preload Decoders Error =>', err);
-      });
-    }
+    this._ensureDecoders().catch(err => {
+      CLog.error('DyCast Preload Decoders Error =>', err);
+    });
   }
 
   /**

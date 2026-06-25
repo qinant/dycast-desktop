@@ -6,6 +6,8 @@ interface RelayCastEvent extends EventMap {
   close: (code?: number, msg?: string) => void;
   error: (ev: Error) => void;
   message: (data: any) => void;
+  /** Rust 端发送通道溢出丢弃帧时触发，参数为累计丢弃数 */
+  backpressure: (dropped: number) => void;
 }
 
 /**
@@ -49,6 +51,9 @@ export class RelayCast {
       });
       this.ws.addEventListener('message', ev => {
         this.emitter.emit('message', ev.data);
+      });
+      this.ws.addEventListener('backpressure', ev => {
+        this.emitter.emit('backpressure', ev.detail.dropped);
       });
       return true;
     } catch (err) {

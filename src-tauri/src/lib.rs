@@ -8,7 +8,7 @@ pub fn run() {
     tauri::Builder::default()
         .manage(std::sync::Arc::new(cast_record::CastRecordState::new()))
         .manage(std::sync::Arc::new(live_info::HttpState::new()))
-        .manage(std::sync::Arc::new(std::sync::Mutex::new(
+        .manage(std::sync::Arc::new(tokio::sync::Mutex::new(
             cast_replay::CastReplayState::new(),
         )))
         .manage(std::sync::Arc::new(std::sync::Mutex::new(

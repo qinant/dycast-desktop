@@ -35,6 +35,8 @@ export interface AppSettings {
   relayFilter: CastMethod[];
   /** 录制消息类型过滤 */
   recordFilter: CastMethod[];
+  /** 最大重连次数（连接断开时的重连上限） */
+  maxReconnectCount: number;
 }
 
 const defaults: AppSettings = {
@@ -46,7 +48,9 @@ const defaults: AppSettings = {
   lastRelayUrl: '',
   relayFilter: [...FORWARDABLE_TYPES],
   recordFilter: [...FORWARDABLE_TYPES],
+  maxReconnectCount: 3,
 };
+export { defaults };
 
 function load(): AppSettings {
   try {

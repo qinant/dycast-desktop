@@ -15,6 +15,23 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url))
     }
   },
+  build: {
+    // Tauri WebView2 (Chromium) 已是现代浏览器，指定高 target 避免不必要转译
+    target: 'chrome110',
+    // base.ts 单文件 ~375KB，避免触发 chunk 大小警告噪音
+    chunkSizeWarningLimit: 600,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          // Vue 运行时 + 虚拟滚动组件（体积稳定，单独分包利于长期缓存）
+          vendor: ['vue', 'vue-virtual-scroller'],
+          // protobuf 共享基础类型（~375KB），各 message decoder 文件都依赖，
+          // 强制单 chunk 避免被不同 dynamic import 子图重复内联
+          'protobuf-base': ['./src/core/model/base.ts', './src/core/model/shared.ts']
+        }
+      }
+    }
+  },
   server: {
     host: '0.0.0.0', // 允许局域网访问
     port: 5173,

@@ -1,11 +1,13 @@
 use std::collections::HashMap;
-use std::fs::File;
-use std::io::{BufRead, BufReader};
+use std::io::BufRead;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use serde::Serialize;
 use serde_json::Value;
+use tokio::fs::File;
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
+use tokio::sync::Mutex;
 
 const FALLBACK_INTERVAL_MS: u64 = 200;
 
@@ -48,8 +50,8 @@ fn message_timestamp(value: &Value) -> Option<u64> {
 }
 
 fn scan_replay_file(path: &Path) -> Result<ReplayFileMetadata, String> {
-    let file = File::open(path).map_err(|e| format!("读取文件失败: {}", e))?;
-    let reader = BufReader::new(file);
+    let file = std::fs::File::open(path).map_err(|e| format!("读取文件失败: {}", e))?;
+    let reader = std::io::BufReader::new(file);
     let mut total_messages = 0;
     let mut estimated_duration_ms = 0;
     let mut prev_timestamp: Option<u64> = None;
@@ -92,12 +94,14 @@ fn scan_replay_file(path: &Path) -> Result<ReplayFileMetadata, String> {
     })
 }
 
-fn read_next_valid_line(reader: &mut BufReader<File>) -> Result<Option<String>, String> {
+async fn read_next_valid_line<R: AsyncBufRead + Unpin>(reader: &mut R) -> Result<Option<String>, String> {
     let mut line = String::new();
     loop {
         line.clear();
+        // tokio::io 的 read_line 内部经阻塞线程池调度，不会卡住 tokio worker 线程
         let size = reader
             .read_line(&mut line)
+            .await
             .map_err(|e| format!("读取文件失败: {}", e))?;
         if size == 0 {
             return Ok(None);
@@ -112,10 +116,11 @@ fn read_next_valid_line(reader: &mut BufReader<File>) -> Result<Option<String>, 
     }
 }
 
-fn open_replay_reader(path: &Path) -> Result<BufReader<File>, String> {
-    File::open(path)
-        .map(BufReader::new)
-        .map_err(|e| format!("读取文件失败: {}", e))
+async fn open_replay_reader(path: &Path) -> Result<BufReader<File>, String> {
+    let file = File::open(path)
+        .await
+        .map_err(|e| format!("读取文件失败: {}", e))?;
+    Ok(BufReader::new(file))
 }
 
 #[tauri::command]
@@ -145,13 +150,10 @@ pub async fn cast_replay_read(
         .await
         .map_err(|e| format!("读取文件失败: {}", e))??;
 
-    let reader_path = path.clone();
-    let reader = tokio::task::spawn_blocking(move || open_replay_reader(&reader_path))
-        .await
-        .map_err(|e| format!("读取文件失败: {}", e))??;
+    let reader = open_replay_reader(&path).await?;
 
     let id = {
-        let mut state = state.lock().map_err(|e| e.to_string())?;
+        let mut state = state.lock().await;
         let id = state.next_id;
         state.next_id += 1;
         state.sessions.insert(id, ReplaySession { path, reader });
@@ -171,11 +173,11 @@ pub async fn cast_replay_next(
     state: tauri::State<'_, Arc<Mutex<CastReplayState>>>,
     id: u64,
 ) -> Result<Option<String>, String> {
-    let mut state = state.lock().map_err(|e| e.to_string())?;
+    let mut state = state.lock().await;
     let Some(session) = state.sessions.get_mut(&id) else {
         return Ok(None);
     };
-    read_next_valid_line(&mut session.reader)
+    read_next_valid_line(&mut session.reader).await
 }
 
 #[tauri::command]
@@ -184,7 +186,7 @@ pub async fn cast_replay_reset(
     id: u64,
 ) -> Result<(), String> {
     let path = {
-        let state = state.lock().map_err(|e| e.to_string())?;
+        let state = state.lock().await;
         state.sessions.get(&id).map(|s| s.path.clone())
     };
 
@@ -192,11 +194,9 @@ pub async fn cast_replay_reset(
         return Ok(());
     };
 
-    let reader = tokio::task::spawn_blocking(move || open_replay_reader(&path))
-        .await
-        .map_err(|e| format!("读取文件失败: {}", e))??;
+    let reader = open_replay_reader(&path).await?;
 
-    let mut state = state.lock().map_err(|e| e.to_string())?;
+    let mut state = state.lock().await;
     if let Some(session) = state.sessions.get_mut(&id) {
         session.reader = reader;
     }
@@ -208,7 +208,7 @@ pub async fn cast_replay_close(
     state: tauri::State<'_, Arc<Mutex<CastReplayState>>>,
     id: u64,
 ) -> Result<(), String> {
-    let mut state = state.lock().map_err(|e| e.to_string())?;
+    let mut state = state.lock().await;
     state.sessions.remove(&id);
     Ok(())
 }
@@ -231,7 +231,7 @@ mod tests {
     fn scans_valid_jsonl_metadata_without_counting_invalid_lines() {
         let path = temp_jsonl_path();
         {
-            let mut file = File::create(&path).unwrap();
+            let mut file = std::fs::File::create(&path).unwrap();
             writeln!(file, "{{\"id\":\"1\",\"timestamp\":1000}}").unwrap();
             writeln!(file, "not json").unwrap();
             writeln!(file).unwrap();

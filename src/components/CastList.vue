@@ -136,7 +136,8 @@ const allCasts: DyMessage[] = [];
 // 添加弹幕
 const appendCasts = function (msgs: DyMessage[]) {
   if (!msgs || !msgs.length) return;
-  allCasts.push(...msgs);
+  // 使用循环 push 避免超大批量下 push(...spread) 触发 RangeError
+  for (let i = 0; i < msgs.length; i++) allCasts.push(msgs[i]);
   trimCasts(allCasts);
   addCasts(msgs);
 };
@@ -149,9 +150,10 @@ const addCasts = function (msgs: DyMessage[], isClear: boolean = false) {
     else return false;
   });
   if (isClear) casts.value = list;
-  else {
-    // 用展开替换 push 以触发 shallowRef 的响应式更新
-    casts.value = [...casts.value, ...list];
+  else if (list.length) {
+    // 仅在有新内容时分配新数组以触发 shallowRef 与 DynamicScroller 的 watcher
+    // vue-virtual-scroller 的 items watcher 依赖引用变化，单纯 triggerRef 无效
+    casts.value = casts.value.concat(list);
     trimCasts(casts.value);
   }
   nextTick(() => {

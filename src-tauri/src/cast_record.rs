@@ -1,10 +1,11 @@
-use std::fs::File;
-use std::io::{BufWriter, Write};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use serde::Serialize;
 use tauri::State;
+use tokio::fs::File;
+use tokio::io::{AsyncWriteExt, BufWriter};
+use tokio::sync::Mutex;
 
 pub struct CastRecordState {
     writer: Mutex<Option<CastRecordWriter>>,
@@ -49,7 +50,7 @@ pub async fn cast_record_start(
     suggested_name: String,
 ) -> Result<Option<CastRecordStartResult>, String> {
     {
-        let writer = state.writer.lock().map_err(|e| e.to_string())?;
+        let writer = state.writer.lock().await;
         if writer.is_some() {
             return Err("弹幕记录已启动".to_string());
         }
@@ -69,9 +70,12 @@ pub async fn cast_record_start(
         return Ok(None);
     };
 
-    let file = File::create(&path).map_err(|e| format!("创建记录文件失败: {}", e))?;
+    // tokio::fs 的文件创建内部经阻塞线程池调度，不会卡住 tokio worker 线程
+    let file = File::create(&path)
+        .await
+        .map_err(|e| format!("创建记录文件失败: {}", e))?;
     let display_path = path.to_string_lossy().to_string();
-    let mut writer = state.writer.lock().map_err(|e| e.to_string())?;
+    let mut writer = state.writer.lock().await;
     *writer = Some(CastRecordWriter {
         writer: BufWriter::new(file),
         path,
@@ -87,12 +91,14 @@ pub async fn cast_record_write(
     lines: String,
     count: u64,
 ) -> Result<u64, String> {
-    let mut guard = state.writer.lock().map_err(|e| e.to_string())?;
+    let mut guard = state.writer.lock().await;
     let record = guard.as_mut().ok_or_else(|| "弹幕记录未启动".to_string())?;
 
+    // tokio::fs 的写入内部经阻塞线程池调度，不会卡住 tokio worker 线程
     record
         .writer
         .write_all(lines.as_bytes())
+        .await
         .map_err(|e| format!("写入记录文件失败: {}", e))?;
     record.count += count;
 
@@ -104,7 +110,7 @@ pub async fn cast_record_stop(
     state: State<'_, Arc<CastRecordState>>,
 ) -> Result<Option<CastRecordStopResult>, String> {
     let record = {
-        let mut guard = state.writer.lock().map_err(|e| e.to_string())?;
+        let mut guard = state.writer.lock().await;
         guard.take()
     };
 
@@ -115,6 +121,7 @@ pub async fn cast_record_stop(
     record
         .writer
         .flush()
+        .await
         .map_err(|e| format!("刷新记录文件失败: {}", e))?;
 
     Ok(Some(CastRecordStopResult {

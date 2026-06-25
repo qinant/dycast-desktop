@@ -17,6 +17,11 @@ interface WsErrorPayload {
   error: string;
 }
 
+interface WsBackpressurePayload {
+  id: number;
+  dropped: number;
+}
+
 type OpenListener = (ev: Event) => void;
 type CloseListener = (ev: CloseEvent) => void;
 type ErrorListener = (ev: ErrorEvent) => void;
@@ -126,6 +131,13 @@ export class TauriWebSocket {
         listen<WsErrorPayload>('ws-error', event => {
           if (event.payload.id !== this.id) return;
           this.dispatchError(event.payload.error);
+        }),
+        listen<WsBackpressurePayload>('ws-backpressure', event => {
+          if (event.payload.id !== this.id) return;
+          // Rust 端发送通道溢出丢弃帧：转发为 backpressure 事件给上层（如 RelayCast）
+          this.target.dispatchEvent(
+            new CustomEvent('backpressure', { detail: { dropped: event.payload.dropped } })
+          );
         })
       ]);
 

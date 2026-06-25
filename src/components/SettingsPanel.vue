@@ -133,6 +133,24 @@
 
             <hr class="setting-divider" />
 
+            <!-- 最大重连次数 -->
+            <div class="setting-item">
+              <div class="setting-info">
+                <div class="setting-label">最大重连次数</div>
+                <div class="setting-desc">连接断开时的重连上限（0-20，需重连生效）</div>
+              </div>
+              <input
+                type="number"
+                class="reconnect-input"
+                min="0"
+                max="20"
+                :value="localSettings.maxReconnectCount"
+                @change="changeMaxReconnect"
+              />
+            </div>
+
+            <hr class="setting-divider" />
+
             <!-- 手动检查更新 -->
             <div class="setting-item">
               <div class="setting-info">
@@ -157,7 +175,7 @@
 
 <script setup lang="ts">
 import { reactive, ref, watch } from 'vue';
-import { settings, FORWARDABLE_TYPES, type AppTheme } from '@/hooks/useSettings';
+import { settings, FORWARDABLE_TYPES, defaults, type AppTheme } from '@/hooks/useSettings';
 import { CastMethod } from '@/core/dycast';
 import { useUpdater } from '@/hooks/useUpdater';
 
@@ -169,7 +187,12 @@ const emit = defineEmits<{
   close: [];
 }>();
 
-const localSettings = reactive({ ...settings });
+// 深拷贝数组字段，避免 splice/push 直接修改全局 settings（relayFilter/recordFilter 是引用类型）
+const localSettings = reactive({
+  ...settings,
+  relayFilter: [...settings.relayFilter],
+  recordFilter: [...settings.recordFilter]
+});
 const checking = ref(false);
 const checkResult = ref<{ type: string; message: string } | null>(null);
 
@@ -199,6 +222,15 @@ const recordTypeList = FORWARDABLE_TYPES.map(m => ({ method: m, label: typeLabel
 
 function toggle(key: 'autoUpdate' | 'rememberRoom' | 'rememberRelay') {
   localSettings[key] = !localSettings[key];
+}
+
+function changeMaxReconnect(ev: Event) {
+  const val = parseInt((ev.target as HTMLInputElement).value, 10);
+  if (Number.isFinite(val)) {
+    localSettings.maxReconnectCount = Math.min(20, Math.max(0, val));
+  } else {
+    localSettings.maxReconnectCount = defaults.maxReconnectCount;
+  }
 }
 
 function toggleRecordType(method: CastMethod) {
@@ -425,6 +457,24 @@ async function handleCheckUpdate() {
     background: var(--app-accent);
     border-color: var(--app-accent);
     color: #fff;
+  }
+}
+
+// Reconnect count input
+.reconnect-input {
+  width: 60px;
+  padding: 6px 8px;
+  border: 1px solid var(--app-border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--app-text);
+  font-size: 13px;
+  text-align: center;
+  flex-shrink: 0;
+
+  &:focus {
+    outline: none;
+    border-color: var(--app-accent);
   }
 }
 

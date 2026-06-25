@@ -350,7 +350,7 @@ const handleMessages = function (msgs: DyMessage[]) {
   if (castRef.value) castRef.value.appendCasts(mainCasts);
   if (otherRef.value) otherRef.value.appendCasts(otherCasts);
   if (relayWs && relayWs.isConnected()) {
-    const filtered = msgs.filter((m): m is DyMessage & { method: CastMethod } => !!m.method && settings.relayFilter.includes(m.method));
+    const filtered = newCasts.filter((m): m is DyMessage & { method: CastMethod } => !!m.method && settings.relayFilter.includes(m.method));
     if (filtered.length) relayWs.send(JSON.stringify(filtered));
   }
 };
@@ -394,7 +394,7 @@ const connectLive = function () {
     clearMessageList();
     CLog.debug('正在连接:', roomNum.value);
     SkMessage.info(`正在连接：${roomNum.value}`);
-    const cast = new DyCast(roomNum.value);
+    const cast = new DyCast(roomNum.value, { maxReconnectCount: settings.maxReconnectCount });
     cast.on('open', (ev, info) => {
       CLog.info('DyCast 房间连接成功');
       SkMessage.success(`房间连接成功[${roomNum.value}]`);
@@ -504,6 +504,10 @@ const relayCast = async function () {
       SkMessage.error(`转发出错了: ${ev.message}`);
       setRelayInputStatus(false);
       relayStatus.value = 2;
+    });
+    cast.on('backpressure', dropped => {
+      CLog.warn(`转发发送通道溢出，已累计丢弃 ${dropped} 帧`);
+      SkMessage.warning(`转发跟不上，已丢弃 ${dropped} 帧`);
     });
     const connected = await cast.connect();
     if (!connected) return;
